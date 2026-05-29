@@ -57,7 +57,7 @@ jobs:
             ios \
             previous-tokens.json \
             tokens/tokens.json \
-            saion-ios-ds/ios-pr-body.md
+            ${{ runner.temp }}/ios-pr-body.md
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -68,4 +68,4 @@ jobs:
           delete-branch: true
           commit-message: update generated design tokens
           title: Update generated design tokens
-          body-path: ios-pr-body.md
+          body-path: ${{ runner.temp }}/ios-pr-body.md

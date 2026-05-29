@@ -57,7 +57,7 @@ jobs:
             android \
             previous-tokens.json \
             tokens/tokens.json \
-            saion-android-ds/android-pr-body.md
+            ${{ runner.temp }}/android-pr-body.md
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -68,4 +68,4 @@ jobs:
           delete-branch: true
           commit-message: update generated design tokens
           title: Update generated design tokens
-          body-path: android-pr-body.md
+          body-path: ${{ runner.temp }}/android-pr-body.md
