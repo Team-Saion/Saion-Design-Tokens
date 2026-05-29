@@ -7,8 +7,8 @@
   "scripts": {
     "build": "npm run build:all",
     "build:all": "npm run build:android && npm run build:ios",
-    "build:android": "node generators/android/generate.mjs",
-    "build:ios": "node generators/ios/generate.mjs",
+    "build:android": "node scripts/android/generate.mjs",
+    "build:ios": "node scripts/ios/generate.mjs",
     "pr-body:android": "node scripts/create-pr-body.mjs android previous-tokens.json tokens/tokens.json",
     "pr-body:ios": "node scripts/create-pr-body.mjs ios previous-tokens.json tokens/tokens.json",
     "clean": "rm -rf build"
