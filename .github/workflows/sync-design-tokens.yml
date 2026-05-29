@@ -7,7 +7,6 @@ on:
       - init/project
     paths:
       - 'tokens/**'
-      - 'generators/**'
       - 'scripts/**'
       - '.github/workflows/**'
       - '.github/pull_request_template/**'
