@@ -3,7 +3,8 @@ import path from 'node:path';
 
 const TOKEN_PATH = 'tokens/tokens.json';
 const OUTPUT_ROOT = 'build/android/token';
-const BASE_PACKAGE = 'com.saion.ds.token';
+const BASE_PACKAGE = 'com.saion.ds';
+const OUTPUT_PACKAGE = `${BASE_PACKAGE}.token`;
 
 const loadJsonObject = async (filePath) => {
   const raw = await fs.readFile(filePath, 'utf-8');
@@ -397,7 +398,7 @@ internal fun createSaionTypography(): SaionTypography =
 await writeKotlinFile({
   directory: 'color',
   fileName: 'PrimitiveColor.kt',
-  packageName: `${BASE_PACKAGE}.color`,
+  packageName: `${OUTPUT_PACKAGE}.color`,
   content: `
 import androidx.compose.ui.graphics.Color
 
@@ -407,7 +408,7 @@ ${createPrimitiveColor()}`,
 await writeKotlinFile({
   directory: 'color',
   fileName: 'SaionColors.kt',
-  packageName: `${BASE_PACKAGE}.color`,
+  packageName: `${OUTPUT_PACKAGE}.color`,
   content: `
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
@@ -426,7 +427,7 @@ ${createFactoryValue({
 await writeKotlinFile({
   directory: 'radius',
   fileName: 'PrimitiveRadius.kt',
-  packageName: `${BASE_PACKAGE}.radius`,
+  packageName: `${OUTPUT_PACKAGE}.radius`,
   content: `
 import androidx.compose.ui.unit.dp
 
@@ -436,7 +437,7 @@ ${createPrimitiveRadius()}`,
 await writeKotlinFile({
   directory: 'radius',
   fileName: 'SaionRadius.kt',
-  packageName: `${BASE_PACKAGE}.radius`,
+  packageName: `${OUTPUT_PACKAGE}.radius`,
   content: `
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.Dp
@@ -455,7 +456,7 @@ ${createFactoryValue({
 await writeKotlinFile({
   directory: 'spacing',
   fileName: 'PrimitiveSpacing.kt',
-  packageName: `${BASE_PACKAGE}.spacing`,
+  packageName: `${OUTPUT_PACKAGE}.spacing`,
   content: `
 import androidx.compose.ui.unit.dp
 
@@ -465,7 +466,7 @@ ${createPrimitiveSpacing()}`,
 await writeKotlinFile({
   directory: 'spacing',
   fileName: 'SaionSpacing.kt',
-  packageName: `${BASE_PACKAGE}.spacing`,
+  packageName: `${OUTPUT_PACKAGE}.spacing`,
   content: `
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.Dp
@@ -486,14 +487,14 @@ ${Object.keys(primitive.Spacing)
 await writeKotlinFile({
   directory: 'typography',
   fileName: 'SaionTypography.kt',
-  packageName: `${BASE_PACKAGE}.typography`,
+  packageName: `${OUTPUT_PACKAGE}.typography`,
   content: `
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.saion.ds.core.internal.createSaionTextStyle
+import ${BASE_PACKAGE}.internal.createSaionTextStyle
 
 ${createSaionTypographyClass()}
 
