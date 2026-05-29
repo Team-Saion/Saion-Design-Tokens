@@ -52,12 +52,21 @@ jobs:
           cp -R build/ios/. "saion-ios-ds/${{ vars.IOS_DS_TOKEN_PATH }}/"
 
       - name: Create iOS PR Body
+        id: pr-body
         run: |
+          body_file="${{ runner.temp }}/ios-pr-body.md"
+
           node scripts/common/create-pr-body.mjs \
             ios \
             previous-tokens.json \
             tokens/tokens.json \
-            ${{ runner.temp }}/ios-pr-body.md
+            "$body_file"
+
+          {
+            echo 'body<<EOF'
+            cat "$body_file"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -68,4 +77,4 @@ jobs:
           delete-branch: true
           commit-message: update generated design tokens
           title: Update generated design tokens
-          body-path: ${{ runner.temp }}/ios-pr-body.md
+          body: ${{ steps.pr-body.outputs.body }}
