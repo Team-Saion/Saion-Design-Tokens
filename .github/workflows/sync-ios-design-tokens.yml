@@ -54,17 +54,14 @@ jobs:
       - name: Create iOS PR Body
         id: pr-body
         run: |
-          body_file="${{ runner.temp }}/ios-pr-body.md"
-
-          node scripts/common/create-pr-body.mjs \
+          body="$(node scripts/common/create-pr-body.mjs \
             ios \
             previous-tokens.json \
-            tokens/tokens.json \
-            "$body_file"
+            tokens/tokens.json)"
 
           {
             echo 'body<<EOF'
-            cat "$body_file"
+            printf '%s\n' "$body"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 

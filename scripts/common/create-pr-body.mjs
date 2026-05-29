@@ -12,4 +12,8 @@ const content = `${template.trim()}
 ${changelog.trim()}
 `;
 
-await fs.writeFile(outputPath, content);
+if (outputPath) {
+  await fs.writeFile(outputPath, content);
+} else {
+  process.stdout.write(content);
+}
