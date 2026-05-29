@@ -41,7 +41,8 @@ jobs:
           node scripts/create-pr-body.mjs \
             android \
             previous-tokens.json \
-            tokens/tokens.json
+            tokens/tokens.json \
+            android-pr-body.md
 
       - name: Generate Android Tokens
         run: npm run build:android
@@ -65,6 +66,6 @@ jobs:
           path: saion-android-ds
           branch: automate/update-design-tokens
           delete-branch: true
-          commit-message: chore: update generated design tokens
+          commit-message: update generated design tokens
           title: Update generated design tokens
-          body-path: ../token-pr.md
+          body-path: ../android-pr-body.md

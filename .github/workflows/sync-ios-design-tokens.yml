@@ -66,6 +66,6 @@ jobs:
           path: saion-ios-ds
           branch: automate/update-design-tokens
           delete-branch: true
-          commit-message: chore: update generated design tokens
+          commit-message: update generated design tokens
           title: Update generated design tokens
-          body-path: ../token-pr.md
+          body-path: ../ios-pr-body.md
