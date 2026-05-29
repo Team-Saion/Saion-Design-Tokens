@@ -36,14 +36,6 @@ jobs:
         run: |
           git show HEAD~1:tokens/tokens.json > previous-tokens.json || echo "{}" > previous-tokens.json
 
-      - name: Create Android PR Body
-        run: |
-          node scripts/common/create-pr-body.mjs \
-            android \
-            previous-tokens.json \
-            tokens/tokens.json \
-            android-pr-body.md
-
       - name: Generate Android Tokens
         run: npm run build:android
 
@@ -59,6 +51,14 @@ jobs:
           mkdir -p "saion-android-ds/${{ vars.ANDROID_DS_TOKEN_PATH }}"
           cp -R build/android/. "saion-android-ds/${{ vars.ANDROID_DS_TOKEN_PATH }}/"
 
+      - name: Create Android PR Body
+        run: |
+          node scripts/common/create-pr-body.mjs \
+            android \
+            previous-tokens.json \
+            tokens/tokens.json \
+            saion-android-ds/android-pr-body.md
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
         with:
@@ -68,4 +68,4 @@ jobs:
           delete-branch: true
           commit-message: update generated design tokens
           title: Update generated design tokens
-          body-path: ${{ github.workspace }}/android-pr-body.md
+          body-path: android-pr-body.md

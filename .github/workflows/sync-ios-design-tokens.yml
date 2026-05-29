@@ -36,14 +36,6 @@ jobs:
         run: |
           git show HEAD~1:tokens/tokens.json > previous-tokens.json || echo "{}" > previous-tokens.json
 
-      - name: Create iOS PR Body
-        run: |
-          node scripts/common/create-pr-body.mjs \
-            ios \
-            previous-tokens.json \
-            tokens/tokens.json \
-            ios-pr-body.md
-
       - name: Generate iOS Tokens
         run: npm run build:ios
 
@@ -59,6 +51,14 @@ jobs:
           mkdir -p "saion-ios-ds/${{ vars.IOS_DS_TOKEN_PATH }}"
           cp -R build/ios/. "saion-ios-ds/${{ vars.IOS_DS_TOKEN_PATH }}/"
 
+      - name: Create iOS PR Body
+        run: |
+          node scripts/common/create-pr-body.mjs \
+            ios \
+            previous-tokens.json \
+            tokens/tokens.json \
+            saion-ios-ds/ios-pr-body.md
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
         with:
@@ -68,4 +68,4 @@ jobs:
           delete-branch: true
           commit-message: update generated design tokens
           title: Update generated design tokens
-          body-path: ${{ github.workspace }}/ios-pr-body.md
+          body-path: ios-pr-body.md
