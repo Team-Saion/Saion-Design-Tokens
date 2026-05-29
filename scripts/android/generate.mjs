@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const TOKEN_PATH = 'tokens/tokens.json';
 const OUTPUT_ROOT = 'build/android/token';
-const BASE_PACKAGE = 'com.saion.ds.core.token';
+const BASE_PACKAGE = 'com.saion.ds.token';
 
 const loadJsonObject = async (filePath) => {
   const raw = await fs.readFile(filePath, 'utf-8');
