@@ -5,7 +5,35 @@ const TOKEN_PATH = 'tokens/tokens.json';
 const OUTPUT_ROOT = 'build/android/token';
 const BASE_PACKAGE = 'com.saion.ds.core.token';
 
-const tokens = JSON.parse(await fs.readFile(TOKEN_PATH, 'utf-8'));
+const loadJsonObject = async (filePath) => {
+  const raw = await fs.readFile(filePath, 'utf-8');
+  const text = raw.replace(/^\uFEFF/, '').trimStart();
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const objectStart = text.indexOf('{');
+    const arrayStart = text.indexOf('[');
+    const firstJsonStart = [objectStart, arrayStart]
+      .filter((index) => index >= 0)
+      .sort((a, b) => a - b)[0];
+
+    if (firstJsonStart > 0) {
+      try {
+        return JSON.parse(text.slice(firstJsonStart));
+      } catch {
+        // Fall through to the explicit error below.
+      }
+    }
+
+    throw new Error(
+      `Failed to parse JSON from ${filePath}: ${error.message}\n` +
+        `First 120 chars: ${JSON.stringify(text.slice(0, 120))}`,
+    );
+  }
+};
+
+const tokens = await loadJsonObject(TOKEN_PATH);
 
 const primitive = tokens['Primitive/Value'];
 const semanticColor = tokens['Semantic/Color/Light'];
