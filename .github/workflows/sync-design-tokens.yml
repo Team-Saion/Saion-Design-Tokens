@@ -30,7 +30,7 @@ jobs:
       github.event_name == 'push' ||
       github.event.inputs.platform == 'all' ||
       github.event.inputs.platform == 'android'
-    uses: ./.github/workflows/android-token-pr.yml
+    uses: ./.github/workflows/sync-android-design-tokens.yml
     secrets: inherit
 
   ios:
@@ -38,7 +38,7 @@ jobs:
       github.event_name == 'push' ||
       github.event.inputs.platform == 'all' ||
       github.event.inputs.platform == 'ios'
-    uses: ./.github/workflows/ios-token-pr.yml
+    uses: ./.github/workflows/sync-ios-design-tokensr.yml
     secrets: inherit
 
   notify-failure:
