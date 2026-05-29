@@ -68,4 +68,4 @@ jobs:
           delete-branch: true
           commit-message: update generated design tokens
           title: Update generated design tokens
-          body-path: ../ios-pr-body.md
+          body-path: ${{ github.workspace }}/ios-pr-body.md
