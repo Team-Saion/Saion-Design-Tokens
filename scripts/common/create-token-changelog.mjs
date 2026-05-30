@@ -77,9 +77,15 @@ const section = (title, items) => {
 const content = [
   '## Token Changes',
   '',
-  section('Added Tokens', added),
-  section('Updated Tokens', updated),
-  section('Removed Tokens', removed),
+  added.length === 0 && updated.length === 0 && removed.length === 0
+    ? 'No token changes detected.'
+    : [
+        section('Added Tokens', added),
+        section('Updated Tokens', updated),
+        section('Removed Tokens', removed),
+      ]
+        .filter(Boolean)
+        .join('\n'),
 ].join('\n');
 
 await fs.writeFile(outputPath, content);

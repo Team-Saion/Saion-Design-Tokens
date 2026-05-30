@@ -2,7 +2,6 @@
  * Style Dictionary v4 build pipeline for Tokens Studio tokens.
  *
  * Reads tokens/tokens.json (Tokens Studio single-file export) and emits:
- *   - build/android/DesignTokens.kt   — Jetpack Compose (Color / Dp / Sp)
  *   - build/ios/DesignTokens.swift    — SwiftUI (Color) + UIKit (UIColor), shared CGFloat dimensions
  *
  * sd-transforms handles the Tokens Studio specifics (composite token expansion,
@@ -14,8 +13,6 @@ import StyleDictionary from 'style-dictionary';
 import { register, getTransforms } from '@tokens-studio/sd-transforms';
 
 // ---- Editable output identifiers -------------------------------------------
-const KOTLIN_PACKAGE = 'com.example.designtokens';
-const KOTLIN_OBJECT = 'DesignTokens';
 const SWIFT_ENUM = 'DesignTokens';
 // ----------------------------------------------------------------------------
 
@@ -161,28 +158,6 @@ const sd = new StyleDictionary({
   source: ['tokens/tokens.json'],
   preprocessors: ['tokens-studio'],
   platforms: {
-    compose: {
-      transforms: [
-        ...getTransforms({ platform: 'compose' }),
-        'attribute/cti',
-        'name/camel',
-        'color/composeColor',
-        'compose/size/dp',
-        'compose/size/sp',
-      ],
-      buildPath: 'build/android/',
-      files: [
-        {
-          destination: 'DesignTokens.kt',
-          format: 'compose/object',
-          options: {
-            fileHeader: 'tokens-header',
-            packageName: KOTLIN_PACKAGE,
-            className: KOTLIN_OBJECT,
-          },
-        },
-      ],
-    },
     ios: {
       transforms: [
         ...getTransforms({ platform: 'js' }),
