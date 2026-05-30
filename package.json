@@ -9,8 +9,8 @@
     "build:all": "npm run build:android && npm run build:ios",
     "build:android": "node scripts/android/generate.mjs",
     "build:ios": "node scripts/ios/generate.mjs",
-    "pr-body:android": "node scripts/common/create-pr-body.mjs android previous-tokens.json tokens/tokens.json",
-    "pr-body:ios": "node scripts/common/create-pr-body.mjs ios previous-tokens.json tokens/tokens.json",
+    "pr-body:android": "changelog=$(mktemp) && node scripts/common/create-token-changelog.mjs previous-tokens.json tokens/tokens.json \"$changelog\" && node scripts/common/create-pr-body.mjs \"$changelog\"",
+    "pr-body:ios": "changelog=$(mktemp) && node scripts/common/create-token-changelog.mjs previous-tokens.json tokens/tokens.json \"$changelog\" && node scripts/common/create-pr-body.mjs \"$changelog\"",
     "clean": "rm -rf build"
   },
   "license": "MIT",

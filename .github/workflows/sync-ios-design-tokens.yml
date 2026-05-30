@@ -54,10 +54,13 @@ jobs:
       - name: Create iOS PR Body
         id: pr-body
         run: |
-          body="$(node scripts/common/create-pr-body.mjs \
-            ios \
+          changelog="$(mktemp)"
+          node scripts/common/create-token-changelog.mjs \
             previous-tokens.json \
-            tokens/tokens.json)"
+            tokens/tokens.json \
+            "$changelog"
+
+          body="$(node scripts/common/create-pr-body.mjs "$changelog")"
 
           {
             echo 'body<<EOF'

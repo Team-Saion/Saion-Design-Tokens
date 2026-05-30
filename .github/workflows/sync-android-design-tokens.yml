@@ -54,10 +54,13 @@ jobs:
       - name: Create Android PR Body
         id: pr-body
         run: |
-          body="$(node scripts/common/create-pr-body.mjs \
-            android \
+          changelog="$(mktemp)"
+          node scripts/common/create-token-changelog.mjs \
             previous-tokens.json \
-            tokens/tokens.json)"
+            tokens/tokens.json \
+            "$changelog"
+
+          body="$(node scripts/common/create-pr-body.mjs "$changelog")"
 
           {
             echo 'body<<EOF'
