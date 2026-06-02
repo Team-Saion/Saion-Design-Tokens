@@ -54,13 +54,8 @@ jobs:
       - name: Create iOS PR Body
         id: pr-body
         run: |
-          changelog="$(mktemp)"
-          node scripts/common/create-token-changelog.mjs \
-            previous-tokens.json \
-            tokens/tokens.json \
-            "$changelog"
-
-          body="$(node scripts/common/create-pr-body.mjs "$changelog")"
+          source_url="https://github.com/${{ github.repository }}/blob/${{ github.sha }}/tokens/tokens.json"
+          body="$(node scripts/common/create-pr-body.mjs previous-tokens.json tokens/tokens.json "$source_url")"
 
           {
             echo 'body<<EOF'
@@ -76,5 +71,5 @@ jobs:
           branch: automate/update-design-tokens
           delete-branch: true
           commit-message: update generated design tokens
-          title: Update generated design tokens
+          title: "[Auto] Update design tokens"
           body: ${{ steps.pr-body.outputs.body }}

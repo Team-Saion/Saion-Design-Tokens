@@ -234,7 +234,7 @@ Node 18 이상이 필요합니다.
   - 플랫폼별 빌드 실행
   - downstream 디자인 시스템 저장소 checkout
   - 생성 결과 복사
-  - changelog / PR body 생성
+  - 토큰 diff 계산 및 PR body 생성
   - 자동 PR 생성
 
 즉, 디자이너가 `tokens/tokens.json`을 커밋한 뒤에는 이 저장소가 단순 파일 저장소가 아니라,
