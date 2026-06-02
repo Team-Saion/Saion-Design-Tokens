@@ -16,6 +16,7 @@ const CONFIG = {
     'line-height',
     'letter-spacing',
   ],
+  primitiveSemanticFallbackRoles: ['Spacing'],
 };
 
 const loadJsonObject = async (filePath) => {
@@ -136,6 +137,11 @@ ${content}
   );
 };
 
+const removeOutputFile = async (directory, fileName) => {
+  const filePath = path.join(CONFIG.outputRoot, directory, fileName);
+  await fs.rm(filePath, { force: true });
+};
+
 const getOutputTarget = (layer, role) => ({
   directory: role.toLowerCase(),
   fileName: `${layer}${role}.kt`,
@@ -238,12 +244,12 @@ const normalizeSemanticNode = (node, matcher) => {
     return null;
   }
 
-  if (matcher(node)) {
-    return node;
-  }
-
   const wrapped = unwrapSingleObjectChild(node);
   if (wrapped && matcher(wrapped.value)) {
+    return wrapped.value;
+  }
+
+  if (matcher(node)) {
     return node;
   }
 
@@ -293,7 +299,7 @@ const matchesSemanticColorTree = (node) => {
 const matchesSemanticTypographyTree = (node) =>
   countTypographyStyles(node) > 0;
 
-const matchesSemanticRadiusTree = (node, primitiveRadiusRoot) => {
+const matchesSemanticNumberTree = (node, primitiveRoot) => {
   const leaves = collectLeaves(node, isNumberToken);
   const tokens = collectTokens(node);
 
@@ -304,11 +310,12 @@ const matchesSemanticRadiusTree = (node, primitiveRadiusRoot) => {
   const referenceGroups = new Set(leaves.map(getReferenceGroup).filter(Boolean));
   return (
     referenceGroups.size === 0 ||
-    (referenceGroups.size === 1 && referenceGroups.has(primitiveRadiusRoot))
+    (referenceGroups.size === 1 && referenceGroups.has(primitiveRoot))
   );
 };
 
 const createModeName = (variant) => propertyName(variant);
+const createFactoryFunctionName = (className, modeName) => `create${className}${pascal(modeName)}`;
 
 const tokens = await loadJsonObject(CONFIG.tokenFilePath);
 const setEntries = createSetEntries(tokens);
@@ -370,51 +377,97 @@ const primitiveRadius = primitiveRadiusSet.node;
 const validateSemanticRole = (role, entries, matcher) => {
   expect(entries.length > 0, `Missing semantic set for role ${role}`);
 
-  const byMode = new Map();
+  const byMode = [];
+  const seenModes = new Map();
   for (const entry of entries) {
     const normalizedNode = normalizeSemanticNode(entry.value, matcher);
     expect(normalizedNode, `Semantic/${role}/${entry.variant} does not match expected shape`);
 
-    if (byMode.has(entry.modeName)) {
+    if (seenModes.has(entry.modeName)) {
       throw new Error(
-        `Duplicate mode "${entry.modeName}" for semantic ${role}: ${byMode.get(entry.modeName).key}, ${entry.key}`,
+        `Duplicate mode "${entry.modeName}" for semantic ${role}: ${seenModes.get(entry.modeName).key}, ${entry.key}`,
       );
     }
 
-    byMode.set(entry.modeName, {
+    const modeEntry = {
       ...entry,
       node: normalizedNode,
-    });
+    };
+
+    seenModes.set(entry.modeName, modeEntry);
+    byMode.push(modeEntry);
+  }
+
+  return byMode.sort((a, b) => a.metadataIndex - b.metadataIndex);
+};
+
+const createPrimitiveFallbackReferenceToken = (primitiveRootName, tokenKey, token) => ({
+  ...token,
+  value: `{${primitiveRootName}.${tokenKey}}`,
+});
+
+const normalizePrimitiveFallbackNode = (primitiveRootName, node) => {
+  if (isToken(node)) {
+    throw new Error(`Fallback leaf normalization requires parent key for ${primitiveRootName}`);
   }
 
   return Object.fromEntries(
-    [...byMode.entries()]
-      .sort(([, a], [, b]) => a.metadataIndex - b.metadataIndex)
-      .map(([modeName, entry]) => [modeName, entry.node]),
+    Object.entries(node).map(([key, value]) => {
+      if (isToken(value)) {
+        return [
+          primitiveValueName(key),
+          createPrimitiveFallbackReferenceToken(primitiveRootName, key, value),
+        ];
+      }
+
+      return [key, normalizePrimitiveFallbackNode(primitiveRootName, value)];
+    }),
   );
 };
 
-const semanticColor = validateSemanticRole(
+const resolvePrimitiveSemanticFallback = (role, primitiveSet, entries, matcher) => {
+  if (entries.length > 0) {
+    return validateSemanticRole(role, entries, matcher);
+  }
+
+  expect(
+    CONFIG.primitiveSemanticFallbackRoles.includes(role),
+    `Missing semantic set for role ${role}`,
+  );
+
+  return [{
+    key: `Primitive/${role}/Default`,
+    role,
+    variant: 'Default',
+    modeName: createModeName('Default'),
+    metadataIndex: Number.MAX_SAFE_INTEGER,
+    node: normalizePrimitiveFallbackNode(primitiveSet.rootName, primitiveSet.node),
+  }];
+};
+
+const semanticColorModes = validateSemanticRole(
   'Color',
   semanticByRole.get('Color'),
   matchesSemanticColorTree,
 );
 
-const semanticTypography = validateSemanticRole(
+const semanticTypographyModes = validateSemanticRole(
   'Typography',
   semanticByRole.get('Typography'),
   matchesSemanticTypographyTree,
 );
 
-const semanticRadius = validateSemanticRole(
+const semanticRadiusModes = validateSemanticRole(
   'Radius',
   semanticByRole.get('Radius'),
-  (node) => matchesSemanticRadiusTree(node, primitiveRadiusSet.rootName),
+  (node) => matchesSemanticNumberTree(node, primitiveRadiusSet.rootName),
 );
 
-expect(
-  semanticByRole.get('Spacing').length === 0,
-  'Semantic/Spacing/* is not supported by the Android generator',
+const semanticSpacingModes = resolvePrimitiveSemanticFallback(
+  'Spacing',
+  primitiveSpacingSet,
+  semanticByRole.get('Spacing'),
+  (node) => matchesSemanticNumberTree(node, primitiveSpacingSet.rootName),
 );
 
 const primitiveRoots = new Map([
@@ -471,6 +524,16 @@ const primitiveRadiusReference = (reference) => {
   return `PrimitiveRadius.${primitiveValueName(segments.at(-1))}`;
 };
 
+const primitiveSpacingReference = (reference) => {
+  const { primitive, segments } = resolvePrimitiveToken(reference);
+
+  if (primitive.role !== 'spacing') {
+    throw new Error(`Expected spacing reference but got: ${reference}`);
+  }
+
+  return `PrimitiveSpacing.${primitiveValueName(segments.at(-1))}`;
+};
+
 const colorValue = (token) => {
   if (String(token.value).startsWith('{')) {
     return primitiveColorReference(token.value);
@@ -482,6 +545,14 @@ const colorValue = (token) => {
 const radiusValue = (token) => {
   if (String(token.value).startsWith('{')) {
     return primitiveRadiusReference(token.value);
+  }
+
+  return dp(token.value);
+};
+
+const spacingValue = (token) => {
+  if (String(token.value).startsWith('{')) {
+    return primitiveSpacingReference(token.value);
   }
 
   return dp(token.value);
@@ -504,6 +575,55 @@ ${nextIndent}fontWeight = ${fontWeight(typographyRawValue(token['font-weight']))
 ${nextIndent}lineHeight = ${dp(typographyRawValue(token['line-height']))},
 ${nextIndent}letterSpacing = ${dp(typographyRawValue(token['letter-spacing']))},
 ${indent})`;
+};
+
+const createNodeShape = (node, leafPredicate) => {
+  if (leafPredicate(node)) {
+    return '__leaf__';
+  }
+
+  return Object.fromEntries(
+    Object.entries(node).map(([key, value]) => [key, createNodeShape(value, leafPredicate)]),
+  );
+};
+
+const validateConsistentSemanticShape = (role, modes, leafPredicate) => {
+  expect(modes.length > 0, `Missing semantic modes for role ${role}`);
+
+  const [firstMode, ...restModes] = modes;
+  const expectedShape = JSON.stringify(createNodeShape(firstMode.node, leafPredicate));
+
+  for (const mode of restModes) {
+    const actualShape = JSON.stringify(createNodeShape(mode.node, leafPredicate));
+    expect(
+      actualShape === expectedShape,
+      `Semantic/${role} mode "${mode.variant}" must match the shape of "${firstMode.variant}"`,
+    );
+  }
+
+  return firstMode.node;
+};
+
+const pruneRedundantRadiusNode = (node) => {
+  if (!isObject(node) || !isObject(node.Radius)) {
+    return node;
+  }
+
+  const radiusNode = node.Radius;
+  const topLevelComponentShape = JSON.stringify(createNodeShape(node.Component, isToken));
+  const topLevelContainerShape = JSON.stringify(createNodeShape(node.Container, isToken));
+  const nestedComponentShape = JSON.stringify(createNodeShape(radiusNode.Component, isToken));
+  const nestedContainerShape = JSON.stringify(createNodeShape(radiusNode.Container, isToken));
+
+  if (
+    topLevelComponentShape === nestedComponentShape &&
+    topLevelContainerShape === nestedContainerShape
+  ) {
+    const { Radius: _radius, ...prunedNode } = node;
+    return prunedNode;
+  }
+
+  return node;
 };
 
 const createDataClass = ({
@@ -588,6 +708,24 @@ const createFactoryValue = ({
   return lines.join('\n');
 };
 
+const createModeFactories = ({
+  className,
+  modes,
+  leafValue,
+  leafPredicate,
+  composable = false,
+}) =>
+  modes.map((mode) => {
+    const signature = `${composable ? '@Composable\n' : ''}internal fun ${createFactoryFunctionName(className, mode.modeName)}(): ${className} =`;
+    return `${signature}
+${createFactoryValue({
+  className,
+  node: mode.node,
+  leafValue,
+  leafPredicate,
+})}`;
+  }).join('\n\n');
+
 const createPrimitiveColor = () => {
   const lines = ['internal object PrimitiveColor {'];
 
@@ -625,31 +763,6 @@ const createPrimitiveSpacing = () => {
   return lines.join('\n');
 };
 
-const createSemanticSpacingClass = () => {
-  const props = Object.keys(primitiveSpacing)
-    .map((name) => `    val ${propertyName(primitiveValueName(name))}: Dp,`)
-    .join('\n');
-
-  return `@Immutable
-data class SaionSpacing(
-${props}
-)`;
-};
-
-const createSemanticSpacingFactory = () => {
-  const props = Object.keys(primitiveSpacing)
-    .map(
-      (name) =>
-        `        ${propertyName(primitiveValueName(name))} = PrimitiveSpacing.${primitiveValueName(name)},`,
-    )
-    .join('\n');
-
-  return `internal fun createSaionSpacing(): SaionSpacing =
-    SaionSpacing(
-${props}
-    )`;
-};
-
 await writeKotlinFile({
   ...getOutputTarget('Primitive', 'Color'),
   content: `
@@ -666,15 +779,14 @@ import androidx.compose.ui.graphics.Color
 
 ${createDataClass({
   className: 'SemanticColor',
-  node: semanticColor,
+  node: validateConsistentSemanticShape('Color', semanticColorModes, isToken),
   leafType: 'Color',
   leafPredicate: isToken,
 })}
 
-internal fun createSemanticColor(): SemanticColor =
-${createFactoryValue({
+${createModeFactories({
   className: 'SemanticColor',
-  node: semanticColor,
+  modes: semanticColorModes,
   leafValue: colorValue,
   leafPredicate: isToken,
 })}`,
@@ -696,15 +808,19 @@ import androidx.compose.ui.unit.Dp
 
 ${createDataClass({
   className: 'SemanticRadius',
-  node: semanticRadius,
+  node: pruneRedundantRadiusNode(
+    validateConsistentSemanticShape('Radius', semanticRadiusModes, isToken),
+  ),
   leafType: 'Dp',
   leafPredicate: isToken,
 })}
 
-internal fun createSemanticRadius(): SemanticRadius =
-${createFactoryValue({
+${createModeFactories({
   className: 'SemanticRadius',
-  node: semanticRadius,
+  modes: semanticRadiusModes.map((mode) => ({
+    ...mode,
+    node: pruneRedundantRadiusNode(mode.node),
+  })),
   leafValue: radiusValue,
   leafPredicate: isToken,
 })}`,
@@ -718,17 +834,29 @@ import androidx.compose.ui.unit.dp
 ${createPrimitiveSpacing()}`,
 });
 
+await removeOutputFile('spacing', 'SaionSpacing.kt');
+
 await writeKotlinFile({
   directory: 'spacing',
-  fileName: 'SaionSpacing.kt',
+  fileName: 'SemanticSpacing.kt',
   packageName: `${CONFIG.outputPackage}.spacing`,
   content: `
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.Dp
 
-${createSemanticSpacingClass()}
+${createDataClass({
+  className: 'SemanticSpacing',
+  node: validateConsistentSemanticShape('Spacing', semanticSpacingModes, isToken),
+  leafType: 'Dp',
+  leafPredicate: isToken,
+})}
 
-${createSemanticSpacingFactory()}`,
+${createModeFactories({
+  className: 'SemanticSpacing',
+  modes: semanticSpacingModes,
+  leafValue: spacingValue,
+  leafPredicate: isToken,
+})}`,
 });
 
 await writeKotlinFile({
@@ -743,17 +871,16 @@ import ${CONFIG.basePackage}.internal.createSaionTextStyle
 
 ${createDataClass({
   className: 'SemanticTypography',
-  node: semanticTypography,
+  node: validateConsistentSemanticShape('Typography', semanticTypographyModes, isTypographyStyle),
   leafType: 'TextStyle',
   leafPredicate: isTypographyStyle,
 })}
 
-@Composable
-internal fun createSemanticTypography(): SemanticTypography =
-${createFactoryValue({
+${createModeFactories({
   className: 'SemanticTypography',
-  node: semanticTypography,
+  modes: semanticTypographyModes,
   leafValue: textStyleValue,
   leafPredicate: isTypographyStyle,
+  composable: true,
 })}`,
 });
