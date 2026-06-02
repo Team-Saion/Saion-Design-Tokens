@@ -1,10 +1,22 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const TOKEN_PATH = 'tokens/tokens.json';
-const OUTPUT_ROOT = 'build/android/token';
-const BASE_PACKAGE = 'com.saion.ds';
-const OUTPUT_PACKAGE = `${BASE_PACKAGE}.token`;
+const CONFIG = {
+  tokenFilePath: 'tokens/tokens.json',
+  outputRoot: 'build/android/token',
+  basePackage: 'com.saion.ds',
+  outputPackage: 'com.saion.ds.token',
+  primitiveSegment: 'Primitive',
+  semanticSegment: 'Semantic',
+  primitiveValueSegment: 'Value',
+  roles: ['Color', 'Typography', 'Spacing', 'Radius'],
+  typographyFields: [
+    'font-size',
+    'font-weight',
+    'line-height',
+    'letter-spacing',
+  ],
+};
 
 const loadJsonObject = async (filePath) => {
   const raw = await fs.readFile(filePath, 'utf-8');
@@ -34,13 +46,6 @@ const loadJsonObject = async (filePath) => {
   }
 };
 
-const tokens = await loadJsonObject(TOKEN_PATH);
-
-const primitive = tokens['Primitive/Value'];
-const semanticColor = tokens['Semantic/Color/Light'];
-const semanticRadius = tokens['Semantic/Radius/Default'];
-const semanticTypography = tokens['Semantic/Typography/Value'];
-
 const isObject = (value) =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -49,12 +54,12 @@ const isToken = (value) =>
   Object.prototype.hasOwnProperty.call(value, 'value') &&
   Object.prototype.hasOwnProperty.call(value, 'type');
 
+const isColorToken = (value) => isToken(value) && value.type === 'color';
+const isNumberToken = (value) => isToken(value) && value.type === 'number';
+
 const isTypographyStyle = (node) =>
   isObject(node) &&
-  isToken(node['font-size']) &&
-  isToken(node['font-weight']) &&
-  isToken(node['line-height']) &&
-  isToken(node['letter-spacing']);
+  CONFIG.typographyFields.every((field) => isToken(node[field]));
 
 const pascal = (value) =>
   String(value)
@@ -80,31 +85,6 @@ const primitiveValueName = (value) =>
 const dp = (value) => {
   const text = String(value);
   return text.startsWith('-') ? `(${text}).dp` : `${text}.dp`;
-};
-
-const writeKotlinFile = async ({
-  directory,
-  fileName,
-  packageName,
-  content,
-}) => {
-  const filePath = path.join(
-    OUTPUT_ROOT,
-    directory,
-    fileName,
-  );
-
-  await fs.mkdir(
-    path.dirname(filePath),
-    { recursive: true },
-  );
-
-  await fs.writeFile(
-    filePath,
-    `package ${packageName}
-${content}
-`,
-  );
 };
 
 const fontWeight = (value) => {
@@ -139,28 +119,355 @@ const hexToComposeColor = (raw) => {
   throw new Error(`Unsupported color format: ${raw}`);
 };
 
-const resolvePrimitiveToken = (reference) => {
-  const segments = reference.replace(/[{}]/g, '').split('.');
-  let current = primitive;
+const writeKotlinFile = async ({
+  directory,
+  fileName,
+  packageName,
+  content,
+}) => {
+  const filePath = path.join(CONFIG.outputRoot, directory, fileName);
+
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(
+    filePath,
+    `package ${packageName}
+${content}
+`,
+  );
+};
+
+const getOutputTarget = (layer, role) => ({
+  directory: role.toLowerCase(),
+  fileName: `${layer}${role}.kt`,
+  packageName: `${CONFIG.outputPackage}.${role.toLowerCase()}`,
+});
+
+const collectLeaves = (node, predicate, leaves = []) => {
+  if (predicate(node)) {
+    leaves.push(node);
+    return leaves;
+  }
+
+  if (!isObject(node)) {
+    return leaves;
+  }
+
+  for (const value of Object.values(node)) {
+    collectLeaves(value, predicate, leaves);
+  }
+
+  return leaves;
+};
+
+const collectTokens = (node) => collectLeaves(node, isToken);
+
+const unwrapSingleObjectChild = (node) => {
+  if (!isObject(node)) {
+    return null;
+  }
+
+  const entries = Object.entries(node).filter(([, value]) => isObject(value));
+  if (entries.length !== 1) {
+    return null;
+  }
+
+  const [key, value] = entries[0];
+  if (isToken(value)) {
+    return null;
+  }
+
+  return { key, value };
+};
+
+const countTypographyStyles = (node) => {
+  if (isTypographyStyle(node)) {
+    return 1;
+  }
+
+  if (!isObject(node)) {
+    return 0;
+  }
+
+  return Object.values(node).reduce(
+    (count, value) => count + countTypographyStyles(value),
+    0,
+  );
+};
+
+const getReferenceGroup = (token) => {
+  if (!isToken(token) || typeof token.value !== 'string' || !token.value.startsWith('{')) {
+    return null;
+  }
+
+  return token.value.replace(/[{}]/g, '').split('.')[0] ?? null;
+};
+
+const getSetOrder = (tokens) => {
+  const orderedKeys = tokens.$metadata?.tokenSetOrder;
+  if (!Array.isArray(orderedKeys)) {
+    return new Map();
+  }
+
+  return new Map(orderedKeys.map((key, index) => [key, index]));
+};
+
+const createSetEntries = (tokens) => {
+  const order = getSetOrder(tokens);
+
+  return Object.entries(tokens)
+    .filter(([key, value]) => !key.startsWith('$') && isObject(value))
+    .map(([key, value], index) => ({
+      key,
+      value,
+      metadataIndex: order.get(key) ?? index,
+    }));
+};
+
+const parseSetKey = (setKey) => {
+  const segments = setKey.split('/').filter(Boolean);
+  if (segments.length !== 3) {
+    throw new Error(`Invalid token set path: ${setKey}`);
+  }
+
+  const [layer, role, variant] = segments;
+  return { layer, role, variant };
+};
+
+const normalizeSemanticNode = (node, matcher) => {
+  if (!isObject(node)) {
+    return null;
+  }
+
+  if (matcher(node)) {
+    return node;
+  }
+
+  const wrapped = unwrapSingleObjectChild(node);
+  if (wrapped && matcher(wrapped.value)) {
+    return node;
+  }
+
+  return null;
+};
+
+const expect = (condition, message) => {
+  if (!condition) {
+    throw new Error(message);
+  }
+};
+
+const expectPrimitiveShape = (role, rootName, node) => {
+  expect(rootName === role, `Primitive set root must match role: expected ${role}, got ${rootName}`);
+
+  if (role === 'Color') {
+    const leaves = collectLeaves(node, isColorToken);
+    const tokens = collectTokens(node);
+    expect(leaves.length > 0 && leaves.length === tokens.length, 'Primitive/Color/Value must contain only color tokens');
+    return;
+  }
+
+  if (role === 'Typography') {
+    expect(
+      CONFIG.typographyFields.every((field) => isObject(node[field])),
+      'Primitive/Typography/Value must contain typography axis groups',
+    );
+    return;
+  }
+
+  if (role === 'Spacing' || role === 'Radius') {
+    const leaves = collectLeaves(node, isNumberToken);
+    const tokens = collectTokens(node);
+    expect(leaves.length > 0 && leaves.length === tokens.length, `Primitive/${role}/Value must contain only number tokens`);
+    return;
+  }
+
+  throw new Error(`Unsupported primitive role: ${role}`);
+};
+
+const matchesSemanticColorTree = (node) => {
+  const leaves = collectLeaves(node, isColorToken);
+  const tokens = collectTokens(node);
+  return leaves.length > 0 && leaves.length === tokens.length;
+};
+
+const matchesSemanticTypographyTree = (node) =>
+  countTypographyStyles(node) > 0;
+
+const matchesSemanticRadiusTree = (node, primitiveRadiusRoot) => {
+  const leaves = collectLeaves(node, isNumberToken);
+  const tokens = collectTokens(node);
+
+  if (leaves.length === 0 || leaves.length !== tokens.length) {
+    return false;
+  }
+
+  const referenceGroups = new Set(leaves.map(getReferenceGroup).filter(Boolean));
+  return (
+    referenceGroups.size === 0 ||
+    (referenceGroups.size === 1 && referenceGroups.has(primitiveRadiusRoot))
+  );
+};
+
+const createModeName = (variant) => propertyName(variant);
+
+const tokens = await loadJsonObject(CONFIG.tokenFilePath);
+const setEntries = createSetEntries(tokens);
+
+const primitiveByRole = new Map();
+const semanticByRole = new Map(CONFIG.roles.map((role) => [role, []]));
+
+for (const entry of setEntries) {
+  const { layer, role, variant } = parseSetKey(entry.key);
+  expect(CONFIG.roles.includes(role), `Unsupported token role in set path: ${entry.key}`);
+
+  if (layer === CONFIG.primitiveSegment) {
+    expect(
+      variant === CONFIG.primitiveValueSegment,
+      `Primitive set must use ${CONFIG.primitiveValueSegment} as the third segment: ${entry.key}`,
+    );
+
+    const unwrapped = unwrapSingleObjectChild(entry.value);
+    expect(unwrapped, `Primitive set must have a single object root: ${entry.key}`);
+    expectPrimitiveShape(role, unwrapped.key, unwrapped.value);
+    expect(!primitiveByRole.has(role), `Duplicate primitive set for role ${role}: ${entry.key}`);
+
+    primitiveByRole.set(role, {
+      ...entry,
+      role,
+      rootName: unwrapped.key,
+      node: unwrapped.value,
+    });
+    continue;
+  }
+
+  if (layer === CONFIG.semanticSegment) {
+    semanticByRole.get(role).push({
+      ...entry,
+      role,
+      variant,
+      modeName: createModeName(variant),
+    });
+    continue;
+  }
+
+  throw new Error(`Unsupported token layer in set path: ${entry.key}`);
+}
+
+for (const role of CONFIG.roles) {
+  expect(primitiveByRole.has(role), `Missing primitive set for role ${role}`);
+}
+
+const primitiveColorSet = primitiveByRole.get('Color');
+const primitiveTypographySet = primitiveByRole.get('Typography');
+const primitiveSpacingSet = primitiveByRole.get('Spacing');
+const primitiveRadiusSet = primitiveByRole.get('Radius');
+
+const primitiveColor = primitiveColorSet.node;
+const primitiveTypography = primitiveTypographySet.node;
+const primitiveSpacing = primitiveSpacingSet.node;
+const primitiveRadius = primitiveRadiusSet.node;
+
+const validateSemanticRole = (role, entries, matcher) => {
+  expect(entries.length > 0, `Missing semantic set for role ${role}`);
+
+  const byMode = new Map();
+  for (const entry of entries) {
+    const normalizedNode = normalizeSemanticNode(entry.value, matcher);
+    expect(normalizedNode, `Semantic/${role}/${entry.variant} does not match expected shape`);
+
+    if (byMode.has(entry.modeName)) {
+      throw new Error(
+        `Duplicate mode "${entry.modeName}" for semantic ${role}: ${byMode.get(entry.modeName).key}, ${entry.key}`,
+      );
+    }
+
+    byMode.set(entry.modeName, {
+      ...entry,
+      node: normalizedNode,
+    });
+  }
+
+  return Object.fromEntries(
+    [...byMode.entries()]
+      .sort(([, a], [, b]) => a.metadataIndex - b.metadataIndex)
+      .map(([modeName, entry]) => [modeName, entry.node]),
+  );
+};
+
+const semanticColor = validateSemanticRole(
+  'Color',
+  semanticByRole.get('Color'),
+  matchesSemanticColorTree,
+);
+
+const semanticTypography = validateSemanticRole(
+  'Typography',
+  semanticByRole.get('Typography'),
+  matchesSemanticTypographyTree,
+);
+
+const semanticRadius = validateSemanticRole(
+  'Radius',
+  semanticByRole.get('Radius'),
+  (node) => matchesSemanticRadiusTree(node, primitiveRadiusSet.rootName),
+);
+
+expect(
+  semanticByRole.get('Spacing').length === 0,
+  'Semantic/Spacing/* is not supported by the Android generator',
+);
+
+const primitiveRoots = new Map([
+  [primitiveColorSet.rootName, { role: 'color', node: primitiveColor }],
+  [primitiveTypographySet.rootName, { role: 'typography', node: primitiveTypography }],
+  [primitiveSpacingSet.rootName, { role: 'spacing', node: primitiveSpacing }],
+  [primitiveRadiusSet.rootName, { role: 'radius', node: primitiveRadius }],
+]);
+
+const resolveReferencePath = (rootNode, segments) => {
+  let current = rootNode;
 
   for (const segment of segments) {
     current = current?.[segment];
   }
 
-  if (!current) {
-    throw new Error(`Cannot resolve reference: ${reference}`);
-  }
-
   return current;
 };
 
-const primitiveColorReference = (reference) => {
+const resolvePrimitiveToken = (reference) => {
   const segments = reference.replace(/[{}]/g, '').split('.');
+  const [group, ...rest] = segments;
+  const primitive = primitiveRoots.get(group);
+
+  if (!primitive) {
+    throw new Error(`Unsupported primitive reference group: ${reference}`);
+  }
+
+  const token = resolveReferencePath(primitive.node, rest);
+  if (!token) {
+    throw new Error(`Cannot resolve reference: ${reference}`);
+  }
+
+  return { primitive, token, segments };
+};
+
+const primitiveColorReference = (reference) => {
+  const { primitive, segments } = resolvePrimitiveToken(reference);
+
+  if (primitive.role !== 'color') {
+    throw new Error(`Expected color reference but got: ${reference}`);
+  }
+
   return `PrimitiveColor.${pascal(segments.slice(1).join(' '))}`;
 };
 
 const primitiveRadiusReference = (reference) => {
-  const segments = reference.replace(/[{}]/g, '').split('.');
+  const { primitive, segments } = resolvePrimitiveToken(reference);
+
+  if (primitive.role !== 'radius') {
+    throw new Error(`Expected radius reference but got: ${reference}`);
+  }
+
   return `PrimitiveRadius.${primitiveValueName(segments.at(-1))}`;
 };
 
@@ -182,7 +489,7 @@ const radiusValue = (token) => {
 
 const typographyRawValue = (token) => {
   if (String(token.value).startsWith('{')) {
-    return resolvePrimitiveToken(token.value).value;
+    return resolvePrimitiveToken(token.value).token.value;
   }
 
   return token.value;
@@ -197,41 +504,6 @@ ${nextIndent}fontWeight = ${fontWeight(typographyRawValue(token['font-weight']))
 ${nextIndent}lineHeight = ${dp(typographyRawValue(token['line-height']))},
 ${nextIndent}letterSpacing = ${dp(typographyRawValue(token['letter-spacing']))},
 ${indent})`;
-};
-
-const createPrimitiveColor = () => {
-  const lines = ['internal object PrimitiveColor {'];
-
-  for (const [groupName, group] of Object.entries(primitive.Color)) {
-    for (const [name, token] of Object.entries(group)) {
-      lines.push(`    val ${pascal(`${groupName} ${name}`)} = ${hexToComposeColor(token.value)}`);
-    }
-  }
-
-  lines.push('}');
-  return lines.join('\n');
-};
-
-const createPrimitiveRadius = () => {
-  const lines = ['internal object PrimitiveRadius {'];
-
-  for (const [name, token] of Object.entries(primitive.Radius)) {
-    lines.push(`    val ${primitiveValueName(name)} = ${dp(token.value)}`);
-  }
-
-  lines.push('}');
-  return lines.join('\n');
-};
-
-const createPrimitiveSpacing = () => {
-  const lines = ['internal object PrimitiveSpacing {'];
-
-  for (const [name, token] of Object.entries(primitive.Spacing)) {
-    lines.push(`    val ${primitiveValueName(name)} = ${dp(token.value)}`);
-  }
-
-  lines.push('}');
-  return lines.join('\n');
 };
 
 const createDataClass = ({
@@ -256,7 +528,6 @@ const createDataClass = ({
 
     const nestedClassName = pascal(key);
     props.push(`${propIndent}val ${prop}: ${nestedClassName},`);
-
     nestedClasses.push(
       createDataClass({
         className: nestedClassName,
@@ -291,7 +562,6 @@ const createFactoryValue = ({
 }) => {
   const indent = '    '.repeat(depth);
   const childIndent = '    '.repeat(depth + 1);
-
   const lines = [`${indent}${className}(`];
 
   for (const [key, value] of Object.entries(node)) {
@@ -318,45 +588,45 @@ const createFactoryValue = ({
   return lines.join('\n');
 };
 
-const filteredSemanticTypography = () =>
-  Object.fromEntries(
-    Object.entries(semanticTypography).filter(([key]) => key !== 'Typography'),
-  );
+const createPrimitiveColor = () => {
+  const lines = ['internal object PrimitiveColor {'];
 
-const createSaionColorsClass = () =>
-  createDataClass({
-    className: 'SaionColors',
-    node: semanticColor,
-    leafType: 'Color',
-    leafPredicate: isToken,
-  });
+  for (const [groupName, group] of Object.entries(primitiveColor)) {
+    for (const [name, token] of Object.entries(group)) {
+      lines.push(
+        `    val ${pascal(`${groupName} ${name}`)} = ${hexToComposeColor(token.value)}`,
+      );
+    }
+  }
 
-const createSaionColorsFactory = () => `internal fun createSaionColors(): SaionColors =
-    ${createFactoryValue({
-      className: 'SaionColors',
-      node: semanticColor,
-      leafValue: colorValue,
-      leafPredicate: isToken,
-    })}`;
+  lines.push('}');
+  return lines.join('\n');
+};
 
-const createSaionRadiusClass = () =>
-  createDataClass({
-    className: 'SaionRadius',
-    node: semanticRadius,
-    leafType: 'Dp',
-    leafPredicate: isToken,
-  });
+const createPrimitiveRadius = () => {
+  const lines = ['internal object PrimitiveRadius {'];
 
-const createSaionRadiusFactory = () => `internal fun createSaionRadius(): SaionRadius =
-    ${createFactoryValue({
-      className: 'SaionRadius',
-      node: semanticRadius,
-      leafValue: radiusValue,
-      leafPredicate: isToken,
-    })}`;
+  for (const [name, token] of Object.entries(primitiveRadius)) {
+    lines.push(`    val ${primitiveValueName(name)} = ${dp(token.value)}`);
+  }
 
-const createSaionSpacingClass = () => {
-  const props = Object.keys(primitive.Spacing)
+  lines.push('}');
+  return lines.join('\n');
+};
+
+const createPrimitiveSpacing = () => {
+  const lines = ['internal object PrimitiveSpacing {'];
+
+  for (const [name, token] of Object.entries(primitiveSpacing)) {
+    lines.push(`    val ${primitiveValueName(name)} = ${dp(token.value)}`);
+  }
+
+  lines.push('}');
+  return lines.join('\n');
+};
+
+const createSemanticSpacingClass = () => {
+  const props = Object.keys(primitiveSpacing)
     .map((name) => `    val ${propertyName(primitiveValueName(name))}: Dp,`)
     .join('\n');
 
@@ -366,39 +636,22 @@ ${props}
 )`;
 };
 
-const createSaionSpacingFactory = () => {
-  const props = Object.keys(primitive.Spacing)
-    .map((name) => `    ${propertyName(primitiveValueName(name))} = PrimitiveSpacing.${primitiveValueName(name)},`)
+const createSemanticSpacingFactory = () => {
+  const props = Object.keys(primitiveSpacing)
+    .map(
+      (name) =>
+        `        ${propertyName(primitiveValueName(name))} = PrimitiveSpacing.${primitiveValueName(name)},`,
+    )
     .join('\n');
 
-  return `internal fun createSaionSpacing(): SaionSpacing = SaionSpacing(
+  return `internal fun createSaionSpacing(): SaionSpacing =
+    SaionSpacing(
 ${props}
-)`;
+    )`;
 };
 
-const createSaionTypographyClass = () =>
-  createDataClass({
-    className: 'SaionTypography',
-    node: filteredSemanticTypography(),
-    leafType: 'TextStyle',
-    leafPredicate: isTypographyStyle,
-  });
-
-const createSaionTypographyFactory = () => `@Composable
-internal fun createSaionTypography(): SaionTypography =
-    ${createFactoryValue({
-      className: 'SaionTypography',
-      node: filteredSemanticTypography(),
-      leafValue: textStyleValue,
-      leafPredicate: isTypographyStyle,
-    })}`;
-
-// Create Files
-
 await writeKotlinFile({
-  directory: 'color',
-  fileName: 'PrimitiveColor.kt',
-  packageName: `${OUTPUT_PACKAGE}.color`,
+  ...getOutputTarget('Primitive', 'Color'),
   content: `
 import androidx.compose.ui.graphics.Color
 
@@ -406,18 +659,21 @@ ${createPrimitiveColor()}`,
 });
 
 await writeKotlinFile({
-  directory: 'color',
-  fileName: 'SaionColors.kt',
-  packageName: `${OUTPUT_PACKAGE}.color`,
+  ...getOutputTarget('Semantic', 'Color'),
   content: `
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 
-${createSaionColorsClass()}
+${createDataClass({
+  className: 'SemanticColor',
+  node: semanticColor,
+  leafType: 'Color',
+  leafPredicate: isToken,
+})}
 
-internal fun createSaionColors(): SaionColors =
+internal fun createSemanticColor(): SemanticColor =
 ${createFactoryValue({
-  className: 'SaionColors',
+  className: 'SemanticColor',
   node: semanticColor,
   leafValue: colorValue,
   leafPredicate: isToken,
@@ -425,9 +681,7 @@ ${createFactoryValue({
 });
 
 await writeKotlinFile({
-  directory: 'radius',
-  fileName: 'PrimitiveRadius.kt',
-  packageName: `${OUTPUT_PACKAGE}.radius`,
+  ...getOutputTarget('Primitive', 'Radius'),
   content: `
 import androidx.compose.ui.unit.dp
 
@@ -435,18 +689,21 @@ ${createPrimitiveRadius()}`,
 });
 
 await writeKotlinFile({
-  directory: 'radius',
-  fileName: 'SaionRadius.kt',
-  packageName: `${OUTPUT_PACKAGE}.radius`,
+  ...getOutputTarget('Semantic', 'Radius'),
   content: `
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.Dp
 
-${createSaionRadiusClass()}
+${createDataClass({
+  className: 'SemanticRadius',
+  node: semanticRadius,
+  leafType: 'Dp',
+  leafPredicate: isToken,
+})}
 
-internal fun createSaionRadius(): SaionRadius =
+internal fun createSemanticRadius(): SemanticRadius =
 ${createFactoryValue({
-  className: 'SaionRadius',
+  className: 'SemanticRadius',
   node: semanticRadius,
   leafValue: radiusValue,
   leafPredicate: isToken,
@@ -454,9 +711,7 @@ ${createFactoryValue({
 });
 
 await writeKotlinFile({
-  directory: 'spacing',
-  fileName: 'PrimitiveSpacing.kt',
-  packageName: `${OUTPUT_PACKAGE}.spacing`,
+  ...getOutputTarget('Primitive', 'Spacing'),
   content: `
 import androidx.compose.ui.unit.dp
 
@@ -466,43 +721,38 @@ ${createPrimitiveSpacing()}`,
 await writeKotlinFile({
   directory: 'spacing',
   fileName: 'SaionSpacing.kt',
-  packageName: `${OUTPUT_PACKAGE}.spacing`,
+  packageName: `${CONFIG.outputPackage}.spacing`,
   content: `
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.Dp
 
-${createSaionSpacingClass()}
+${createSemanticSpacingClass()}
 
-internal fun createSaionSpacing(): SaionSpacing =
-    SaionSpacing(
-${Object.keys(primitive.Spacing)
-  .map(
-    (name) =>
-      `        ${propertyName(primitiveValueName(name))} = PrimitiveSpacing.${primitiveValueName(name)},`,
-  )
-  .join('\n')}
-    )`,
+${createSemanticSpacingFactory()}`,
 });
 
 await writeKotlinFile({
-  directory: 'typography',
-  fileName: 'SaionTypography.kt',
-  packageName: `${OUTPUT_PACKAGE}.typography`,
+  ...getOutputTarget('Semantic', 'Typography'),
   content: `
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import ${BASE_PACKAGE}.internal.createSaionTextStyle
+import ${CONFIG.basePackage}.internal.createSaionTextStyle
 
-${createSaionTypographyClass()}
+${createDataClass({
+  className: 'SemanticTypography',
+  node: semanticTypography,
+  leafType: 'TextStyle',
+  leafPredicate: isTypographyStyle,
+})}
 
 @Composable
-internal fun createSaionTypography(): SaionTypography =
+internal fun createSemanticTypography(): SemanticTypography =
 ${createFactoryValue({
-  className: 'SaionTypography',
-  node: filteredSemanticTypography(),
+  className: 'SemanticTypography',
+  node: semanticTypography,
   leafValue: textStyleValue,
   leafPredicate: isTypographyStyle,
 })}`,
