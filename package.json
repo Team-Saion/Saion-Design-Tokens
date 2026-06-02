@@ -1,0 +1,21 @@
+{
+  "name": "design-tokens",
+  "version": "1.0.0",
+  "description": "Design tokens for iOS and Android — synced from Figma via Tokens Studio",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:all",
+    "build:all": "npm run build:android && npm run build:ios",
+    "build:android": "node scripts/android/generate.mjs",
+    "build:ios": "node scripts/ios/generate.mjs",
+    "pr-body:android": "node scripts/common/create-pr-body.mjs previous-tokens.json tokens/tokens.json \"${SOURCE_URL:-https://github.com/example/design-tokens/blob/main/tokens/tokens.json}\"",
+    "pr-body:ios": "node scripts/common/create-pr-body.mjs previous-tokens.json tokens/tokens.json \"${SOURCE_URL:-https://github.com/example/design-tokens/blob/main/tokens/tokens.json}\"",
+    "clean": "rm -rf build"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@tokens-studio/sd-transforms": "^1.3.0",
+    "style-dictionary": "^4.4.0"
+  }
+}
