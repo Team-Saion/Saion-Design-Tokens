@@ -1,0 +1,267 @@
+name: Notify Discord On Token Update
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - tokens/tokens.json
+
+permissions:
+  contents: write
+
+jobs:
+  notify-discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Update changelog
+        id: changelog
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          COMMIT_URL: ${{ github.event.head_commit.url }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+
+          changelog_file="CHANGELOG.md"
+          today="$(TZ=Asia/Seoul date +%F)"
+          short_sha="$(printf '%.7s' "$AFTER_SHA")"
+          commit_subject="$(printf '%s\n' "$COMMIT_MESSAGE" | sed -n '1p')"
+          before_json="$(mktemp)"
+          after_json="$(mktemp)"
+          entry_file="$(mktemp)"
+          summary_file="$(mktemp)"
+          tmp_file="$(mktemp)"
+
+          base_sha="$BEFORE_SHA"
+          if [ "$base_sha" = "0000000000000000000000000000000000000000" ]; then
+            base_sha="${AFTER_SHA}^"
+          fi
+
+          if [ ! -f "$changelog_file" ]; then
+            cat <<'EOF' > "$changelog_file"
+          # Changelog
+
+          `tokens/tokens.json` changes merged to `main` are recorded here automatically.
+          EOF
+          fi
+
+          if ! git show "${base_sha}:tokens/tokens.json" > "$before_json" 2>/dev/null; then
+            git show "${AFTER_SHA}^:tokens/tokens.json" > "$before_json"
+          fi
+          cp tokens/tokens.json "$after_json"
+
+          BEFORE_JSON="$before_json" AFTER_JSON="$after_json" ENTRY_FILE="$entry_file" SUMMARY_FILE="$summary_file" SHORT_SHA="$short_sha" COMMIT_URL="$COMMIT_URL" COMMIT_SUBJECT="$commit_subject" node <<'EOF'
+          const fs = require('fs');
+
+          const before = JSON.parse(fs.readFileSync(process.env.BEFORE_JSON, 'utf8'));
+          const after = JSON.parse(fs.readFileSync(process.env.AFTER_JSON, 'utf8'));
+
+          function isToken(node) {
+            return node && typeof node === 'object' && 'value' in node && 'type' in node;
+          }
+
+          function flatten(node, path = [], acc = new Map()) {
+            if (isToken(node)) {
+              acc.set(path.join('/'), {
+                value: node.value,
+                type: node.type
+              });
+              return acc;
+            }
+
+            if (!node || typeof node !== 'object' || Array.isArray(node)) {
+              return acc;
+            }
+
+            for (const [key, value] of Object.entries(node)) {
+              if (key.startsWith('$')) {
+                continue;
+              }
+              flatten(value, path.concat(key), acc);
+            }
+
+            return acc;
+          }
+
+          function formatValue(value) {
+            return typeof value === 'string' ? `"${value}"` : JSON.stringify(value);
+          }
+
+          const beforeMap = flatten(before);
+          const afterMap = flatten(after);
+          const added = [];
+          const changed = [];
+          const removed = [];
+
+          for (const [path, nextToken] of afterMap.entries()) {
+            const prevToken = beforeMap.get(path);
+            if (!prevToken) {
+              added.push(`- \`${path}\`: ${formatValue(nextToken.value)}`);
+              continue;
+            }
+
+            if (JSON.stringify(prevToken) !== JSON.stringify(nextToken)) {
+              changed.push(`- \`${path}\`: ${formatValue(prevToken.value)} -> ${formatValue(nextToken.value)}`);
+            }
+          }
+
+          for (const [path, prevToken] of beforeMap.entries()) {
+            if (!afterMap.has(path)) {
+              removed.push(`- \`${path}\`: ${formatValue(prevToken.value)}`);
+            }
+          }
+
+          const sortLines = (lines) => lines.sort((a, b) => a.localeCompare(b));
+          sortLines(added);
+          sortLines(changed);
+          sortLines(removed);
+
+          const sections = [];
+          const summary = [];
+
+          if (added.length) {
+            sections.push('#### Added', '', ...added);
+            summary.push(...added.slice(0, 2));
+          }
+          if (changed.length) {
+            sections.push('#### Changed', '', ...changed);
+            summary.push(...changed.slice(0, 2));
+          }
+          if (removed.length) {
+            sections.push('#### Removed', '', ...removed);
+            summary.push(...removed.slice(0, 2));
+          }
+          if (!sections.length) {
+            sections.push('#### Changed', '', '- No token-level changes detected.');
+            summary.push('- No token-level changes detected.');
+          }
+
+          const entry = [
+            `### [${process.env.SHORT_SHA}](${process.env.COMMIT_URL}) ${process.env.COMMIT_SUBJECT}`,
+            '',
+            ...sections,
+            ''
+          ].join('\n');
+
+          fs.writeFileSync(process.env.ENTRY_FILE, entry);
+          fs.writeFileSync(process.env.SUMMARY_FILE, summary.slice(0, 3).join('\n'));
+          EOF
+
+          awk -v today="$today" -v entry_file="$entry_file" '
+            function print_entry() {
+              while ((getline line < entry_file) > 0) {
+                print line
+              }
+              close(entry_file)
+            }
+
+            BEGIN {
+              inserted = 0
+            }
+
+            /^## / && !inserted {
+              if ($0 == "## " today) {
+                print
+                print ""
+                print_entry()
+                print ""
+                inserted = 1
+                next
+              }
+
+              print "## " today
+              print ""
+              print_entry()
+              print ""
+              inserted = 1
+            }
+
+            { print }
+
+            END {
+              if (!inserted) {
+                print ""
+                print "## " today
+                print ""
+                print_entry()
+              }
+            }
+          ' "$changelog_file" > "$tmp_file"
+
+          mv "$tmp_file" "$changelog_file"
+
+          output_delimiter="CHANGELOG_SUMMARY_$(date +%s)_$$"
+          {
+            echo "summary<<$output_delimiter"
+            cat "$summary_file"
+            printf '\n%s\n' "$output_delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+
+          if git diff --quiet -- CHANGELOG.md; then
+            echo "No changelog changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: update changelog for token change"
+          git push origin HEAD:main
+
+      - name: Build Discord payload
+        id: payload
+        uses: actions/github-script@v8
+        env:
+          CHANGELOG_SUMMARY: ${{ steps.changelog.outputs.summary }}
+        with:
+          script: |
+            const commitMessage = context.payload.head_commit?.message ?? 'tokens/tokens.json updated';
+            const commitUrl = context.payload.head_commit?.url ?? `${context.payload.repository.html_url}/commit/${context.sha}`;
+            const compareUrl = context.payload.compare;
+            const changelogSummary = process.env.CHANGELOG_SUMMARY ?? '';
+
+            const payload = {
+              username: 'GitHub Actions',
+              embeds: [
+                {
+                  title: '🎨 디자인 토큰 파일이 업데이트되었습니다!',
+                  color: 3447003,
+                  fields: [
+                    { name: 'Commit', value: `[${commitMessage}](${commitUrl})`, inline: false },
+                    { name: 'Compare', value: `[View changes](${compareUrl})`, inline: false },
+                    { name: 'Changelog', value: changelogSummary, inline: false }
+                  ],
+                  timestamp: new Date().toISOString()
+                }
+              ]
+            };
+
+            core.setOutput('json', JSON.stringify(payload));
+
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_PAYLOAD: ${{ steps.payload.outputs.json }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "DISCORD_WEBHOOK_URL secret is not configured."
+            exit 1
+          fi
+
+          curl --fail --show-error --silent \
+            -H "Content-Type: application/json" \
+            -d "$DISCORD_PAYLOAD" \
+            "$DISCORD_WEBHOOK_URL"
